@@ -16,13 +16,16 @@ import type { AnalysisResourceConstraintError } from "../../domain/analysisError
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
+const READ_OPERATION = "open_binary";
 
 /** Read and validate an analysis snapshot from the caller's path. */
 export const readAnalysisSnapshot = async (
   path: string,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<
   Result<
     AnalysisSnapshot,
@@ -60,6 +63,8 @@ export const readAnalysisSnapshot = async (
         metadata,
       ],
       signal,
+      resources,
+      READ_OPERATION,
     );
     if (!loaded.ok) return loaded;
     signal?.throwIfAborted();
@@ -74,7 +79,9 @@ export const readAnalysisSnapshot = async (
     return ok(snapshot);
   } catch (cause: unknown) {
     if (signal?.aborted === true)
-      return err(new AnalysisCancelledError("read_evidence_file", { cause }));
+      return err(
+        new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason }),
+      );
     return err(
       new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );
@@ -118,6 +125,7 @@ export const writeAnalysisSnapshot = async (
   snapshot: AnalysisSnapshot,
   path: string,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
 ): Promise<
   Result<{ readonly path: string; readonly bytes: number }, SnapshotFailure>
 > => {
@@ -129,7 +137,7 @@ export const writeAnalysisSnapshot = async (
       new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );
   }
-  return writeTextFile(encoded, path, overwrite);
+  return writeTextFile(encoded, path, overwrite, resources);
 };
 
 const snapshotValidationMessage = (cause: unknown): string =>
