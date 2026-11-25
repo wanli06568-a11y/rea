@@ -8,14 +8,16 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { hashAndroidFile } from "./digest.mjs";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import { JADX_RELEASE } from "../../../dist/android/JadxRelease.js";
 import fixture from "../../fixtures/android/apidemos.json" with { type: "json" };
 import { verifyAndroidCliCancellation } from "./cli-cancellation.mjs";
 import { verifyAndroidMetadata } from "./metadata.mjs";
 import { verifyAndroidClassSearch } from "./class-search.mjs";
 import { verifyAndroidFailureRecovery } from "./failure-recovery.mjs";
+import { verifyAndroidBridgeCatalog } from "./bridge-catalog.mjs";
 import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { HOST_PLATFORM } from "../../../dist/platform/HostPlatform.js";
 import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsAndroidLifecycle } from "./windows-lifecycle.mjs";
 
@@ -29,18 +31,19 @@ if (apk === undefined || jar === undefined)
 await access(apk);
 await access(jar);
 assert.equal(
-  await hashAndroidFile(apk),
+  await sha256File(apk),
   fixture.sha256,
   "Real Android lane requires the fixed ApiDemos release fixture",
 );
 assert.equal(
-  await hashAndroidFile(jar),
+  await sha256File(jar),
   JADX_RELEASE.sha256,
   "Real Android lane requires the audited headless JADX release JAR",
 );
 const configuration = await resolveJadxConfigurationInputs(
   process.env,
   "inspect_android_package",
+  HOST_PLATFORM,
 );
 await validateVerifierJadxConfiguration(
   configuration,
@@ -54,6 +57,10 @@ const entrypoint =
   process.env.REA_ANDROID_ENTRYPOINT ?? resolve(repository, "scripts/rea.mjs");
 const environment = { ...process.env, REA_JADX_MCP_JAR: resolve(jar) };
 const path = resolve(apk);
+const bridge = resolve(
+  dirname(entrypoint),
+  "../bridge/android/ReaJadxBridge.java",
+);
 await verifyAndroidMetadata({
   java,
   jar: resolve(jar),
@@ -63,7 +70,14 @@ await verifyAndroidMetadata({
   jvmArguments,
   entrypoint,
   environment,
-  bridge: resolve(dirname(entrypoint), "../bridge/android/ReaJadxBridge.java"),
+  bridge,
+});
+await verifyAndroidBridgeCatalog({
+  java,
+  jar: resolve(jar),
+  bridge,
+  repository,
+  jvmArguments,
 });
 const tasks = [
   {
@@ -124,7 +138,7 @@ for (const task of tasks) {
     },
   );
   const evidence = parseEvidence(JSON.parse(response.stdout));
-  assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+  assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
   assert.equal(evidence.operation, task.name);
   cliResults.set(task.name, evidence);
   console.log(`PASS CLI ${task.name}`);
@@ -159,8 +173,8 @@ try {
     assert.deepEqual(evidence.parameters, cliResults.get(task.name).parameters);
     assert.deepEqual(evidence.provider, cliResults.get(task.name).provider);
     assert.deepEqual(
-      evidence.subject.digest,
-      cliResults.get(task.name).subject.digest,
+      evidence.subject.identity,
+      cliResults.get(task.name).subject.identity,
     );
     assert.deepEqual(
       evidence.limitations,
@@ -298,7 +312,7 @@ await verifyAndroidFailureRecovery({
   fixture,
 });
 assert.equal(
-  await hashAndroidFile(apk),
+  await sha256File(apk),
   fixture.sha256,
   "Original APK must remain unchanged",
 );
